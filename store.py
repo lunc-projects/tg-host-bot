@@ -22,6 +22,7 @@ DEFAULTS = {
     "starter_mins": 240,
     "custom_starters": [],
     "questions_on": False,
+    "topic_id": None,  # forum topic id for starters/welcomes (1 = General); None = group root
     "quiet_start": 4,
     "quiet_end": 11,
     "cooldown_s": 20,

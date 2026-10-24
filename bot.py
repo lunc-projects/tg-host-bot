@@ -41,7 +41,8 @@ I'm a bot (openly!) who helps keep this community active: I welcome new members,
 /host startermins <30–1440> — how quiet before I start a topic
 /host addstarter <text> — add a custom starter line
 /host questions on | off — also answer unaddressed crypto questions ending in ?
-/host quiet <start>-<end> — my quiet hours in UTC (e.g. 4-11)"""
+/host quiet <start>-<end> — my quiet hours in UTC (e.g. 4-11)
+/host topic <id | off> — pin my starters & welcomes to a forum topic (1 = General)"""
 
 DM_START = """🎙 Hi, I'm a *TG Host* bot — an AI host for crypto groups, with a LUNC / Terra Classic heart.
 
@@ -130,6 +131,7 @@ async def on_host(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"• Starters: {'on' if cfg['starters_on'] else 'off'}"
             f" (after {cfg['starter_mins']} quiet mins, {len(cfg.get('custom_starters') or [])} custom)",
             f"• Questions mode: {'on' if cfg['questions_on'] else 'off'}",
+            f"• Topic pin: {('General (1)' if cfg.get('topic_id') == 1 else cfg.get('topic_id')) if cfg.get('topic_id') else 'none — group root'}",
             f"• Quiet hours (UTC): {cfg['quiet_start']:02d}:00–{cfg['quiet_end']:02d}:00",
             f"• Learned facts: {len((cfg.get('knowledge') or '').splitlines()) if cfg.get('knowledge') else 0} line(s)",
             f"• AI brain: {'connected' if ai_client.configured() else 'NOT configured (limited mode)'}",
@@ -205,6 +207,21 @@ async def on_host(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             return
         store.update_group(chat.id, questions_on=(rest.lower() == "on"))
         await msg.reply_text(f"❓ Questions mode {'on — I’ll also answer unaddressed crypto questions ending in ?' if rest.lower() == 'on' else 'off'}.")
+    elif sub == "topic":
+        if rest.lower() in ("off", "none", "clear"):
+            store.update_group(chat.id, topic_id=None)
+            await msg.reply_text("📌 Topic pin cleared — my starters & welcomes go to the group root.")
+        else:
+            try:
+                tid = int(rest)
+                if tid < 1:
+                    raise ValueError
+            except ValueError:
+                await msg.reply_text("Usage: /host topic <topic id | off> — General is topic 1.")
+                return
+            store.update_group(chat.id, topic_id=tid)
+            await msg.reply_text(f"📌 Pinned — my starters & welcomes will post to topic {tid}"
+                                 + (" (General)." if tid == 1 else "."))
     elif sub == "quiet":
         try:
             a, b = rest.split("-")
@@ -231,7 +248,8 @@ async def on_new_member(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             continue
         name = member.first_name or (f"@{member.username}" if member.username else "friend")
         text = host_logic.render_welcome(cfg.get("welcome_text") or store.DEFAULT_WELCOME, name)
-        await update.message.reply_text(text)
+        await ctx.bot.send_message(chat_id=chat.id, text=text,
+                                   **host_logic.thread_kw(cfg.get("topic_id")))
 
 
 async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -316,7 +334,8 @@ async def starter_loop(app: Application):
                         quiet_start=cfg["quiet_start"], quiet_end=cfg["quiet_end"]):
                     continue
                 text = await make_starter_text(cfg)
-                await app.bot.send_message(chat_id=chat_id, text=text)
+                await app.bot.send_message(chat_id=chat_id, text=text,
+                                           **host_logic.thread_kw(cfg.get("topic_id")))
                 store.update_group(chat_id, last_starter_ts=int(now),
                                    last_activity_ts=int(now),
                                    starter_rotation=int(cfg.get("starter_rotation") or 0) + 1)

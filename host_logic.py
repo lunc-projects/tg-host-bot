@@ -98,5 +98,14 @@ def pick_theme(rng=None):
     return rng.choices(themes, weights=[t["weight"] for t in themes], k=1)[0]
 
 
+def thread_kw(topic_id):
+    """send_message kwargs pinning a post to a forum topic (1 = General)."""
+    try:
+        tid = int(topic_id) if topic_id is not None else 0
+    except (TypeError, ValueError):
+        tid = 0
+    return {"message_thread_id": tid} if tid >= 1 else {}
+
+
 def render_welcome(template: str, name: str) -> str:
     return template.replace("{name}", name or "friend")

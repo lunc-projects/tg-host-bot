@@ -143,4 +143,14 @@ for needle in ["columbus-5", "21 days", "1.5%", "1.2%", "12223", "CW20",
     check(needle in K, f"KB contains '{needle}'")
 check("terra1" not in K, "KB contains no contract addresses")
 
+print("== topic pin ==")
+check(store.get_group(111).get("topic_id") is None, "topic_id default None")
+store.update_group(111, topic_id=1)
+check(store.get_group(111)["topic_id"] == 1, "topic_id set to 1 (General)")
+store.update_group(111, topic_id=None)
+check(store.get_group(111).get("topic_id") is None, "topic_id cleared")
+check(host_logic.thread_kw(1) == {"message_thread_id": 1}, "thread_kw(1) pins General")
+check(host_logic.thread_kw(None) == {}, "thread_kw(None) = group root")
+check(host_logic.thread_kw(0) == {} and host_logic.thread_kw("x") == {}, "thread_kw rejects bad ids")
+
 print(f"\nALL {passed} CHECKS PASSED")

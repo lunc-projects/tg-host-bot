@@ -87,6 +87,7 @@ Members: @mention the bot or reply to it. Admins shape it with `/host`:
 | `/host startermins <30–1440>` | quiet minutes before a starter |
 | `/host addstarter <text>` | add a custom starter line |
 | `/host questions on/off` | answer unaddressed crypto "?" messages too |
+| `/host topic <id \| off>` | pin starters & welcomes to a forum topic (1 = General) |
 | `/host quiet <start>-<end>` | quiet hours in UTC (default 4–11) |
 
 All config commands are group-admin only; the bot politely refuses everyone
