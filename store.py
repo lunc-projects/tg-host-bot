@@ -36,6 +36,7 @@ DEFAULTS = {
     "qa_day": "",
     "qa_count": 0,
     "qa_limited_day": "",
+    "pot_limited_day": "",
 }
 
 
