@@ -68,6 +68,18 @@ def prune_reply_window(reply_timestamps, now, window_s=3600):
     return [t for t in reply_timestamps if now - t < window_s]
 
 
+DAILY_QA_LIMIT = 1  # answered member questions per group per UTC day
+
+
+def daily_qa_count(qa_day, qa_count, today) -> int:
+    """Questions already answered today (UTC); a new day resets to 0."""
+    return 0 if qa_day != today else int(qa_count or 0)
+
+
+def daily_qa_ok(qa_day, qa_count, today) -> bool:
+    return daily_qa_count(qa_day, qa_count, today) < DAILY_QA_LIMIT
+
+
 def in_quiet_hours(hour_utc, quiet_start, quiet_end) -> bool:
     """Quiet window [start, end) in UTC hours; wraps past midnight if start > end.
     start == end means 'no quiet hours'."""

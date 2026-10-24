@@ -33,6 +33,9 @@ DEFAULTS = {
     "last_starter_ts": 0,
     "reply_window": [],
     "starter_rotation": 0,
+    "qa_day": "",
+    "qa_count": 0,
+    "qa_limited_day": "",
 }
 
 

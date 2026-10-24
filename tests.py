@@ -66,6 +66,14 @@ check(not host_logic.cap_ok([NOW - 60] * 30, NOW, 30), "cap blocks at 30 in wind
 check(host_logic.cap_ok([NOW - 7200] * 30, NOW, 30), "old replies fall out of window")
 check(host_logic.prune_reply_window([NOW - 7200, NOW - 10], NOW) == [NOW - 10], "prune keeps only recent")
 
+print("== daily question cap ==")
+check(host_logic.DAILY_QA_LIMIT == 1, "daily question limit is 1")
+check(host_logic.daily_qa_ok("", 0, "2026-10-24"), "daily cap ok with no prior day")
+check(host_logic.daily_qa_ok("2026-10-23", 1, "2026-10-24"), "new UTC day resets daily count")
+check(not host_logic.daily_qa_ok("2026-10-24", 1, "2026-10-24"), "daily cap blocks second question same day")
+check(host_logic.daily_qa_count("2026-10-23", 1, "2026-10-24") == 0, "daily count resets on new day")
+check(host_logic.daily_qa_count("2026-10-24", 1, "2026-10-24") == 1, "daily count keeps same-day total")
+
 print("== quiet hours ==")
 check(host_logic.in_quiet_hours(4, 4, 11), "quiet start inclusive")
 check(host_logic.in_quiet_hours(10, 4, 11), "quiet mid-window")

@@ -29,7 +29,8 @@ is per-group.
   a "current" price, market cap or chain stat — it points people to
   CoinGecko / an exchange / Finder instead. No financial advice, no price
   predictions, no shilling, never asks for seed phrases
-- **Anti-flood**: per-group reply cooldown (20 s) and hourly reply cap (30)
+- **Anti-flood**: per-group reply cooldown (20 s) and hourly reply cap (30);
+  answered member questions capped at 1 per group per UTC day (DMs: 1 per user per day)
 
 ## Set up the bot (BotFather)
 

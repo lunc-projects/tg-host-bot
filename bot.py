@@ -56,6 +56,13 @@ In a group I welcome newcomers, chat when mentioned or replied to, and start a c
 LIMITED_NOTE = ("🤖 I'm running in limited mode right now (my AI brain isn't configured), "
                 "so I can welcome people but can't really chat yet. An admin/owner needs to set AI_API_KEY.")
 
+DAILY_LIMIT_NOTE = ("🎙 That's my one answered question for today — "
+                    "I'll pick up questions again tomorrow.")
+
+# DM daily counts, in-memory only (like all Professor state, a redeploy resets
+# them): user_id -> (utc_date_str, answered_count, limit_note_sent)
+DM_DAILY = {}
+
 
 def build_system_prompt(cfg) -> str:
     name = cfg.get("persona_name") or "Professor Crypto"
@@ -137,6 +144,7 @@ async def on_host(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"• Starters: {'on' if cfg['starters_on'] else 'off'}"
             f" (after {cfg['starter_mins']} quiet mins, {len(cfg.get('custom_starters') or [])} custom)",
             f"• Questions mode: {'on' if cfg['questions_on'] else 'off'}",
+            f"• Daily question limit: {host_logic.DAILY_QA_LIMIT} answered question(s) per day (UTC)",
             f"• Topic pin: {('General (1)' if cfg.get('topic_id') == 1 else cfg.get('topic_id')) if cfg.get('topic_id') else 'none — group root'}",
             f"• Quiet hours (UTC): {cfg['quiet_start']:02d}:00–{cfg['quiet_end']:02d}:00",
             f"• Learned facts: {len((cfg.get('knowledge') or '').splitlines()) if cfg.get('knowledge') else 0} line(s)",
@@ -284,19 +292,42 @@ async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             return
         if not host_logic.cap_ok(cfg["reply_window"], now, cfg["hourly_cap"]):
             return
+        today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+        qa_count = host_logic.daily_qa_count(cfg.get("qa_day"), cfg.get("qa_count"), today)
+        if qa_count >= host_logic.DAILY_QA_LIMIT:
+            if cfg.get("qa_limited_day") != today:
+                await msg.reply_text(DAILY_LIMIT_NOTE)
+                store.update_group(chat.id, qa_limited_day=today)
+            return
         speaker = msg.from_user.first_name or "someone"
         out = await ai_reply(cfg, msg.text, speaker) if ai_client.configured() else None
+        answered = out is not None
         if out is None:
             out = LIMITED_NOTE
         window = host_logic.prune_reply_window(cfg["reply_window"], now)
         window.append(int(now))
-        store.update_group(chat.id, last_reply_ts=int(now), reply_window=window,
-                           last_activity_ts=int(now))
+        fields = dict(last_reply_ts=int(now), reply_window=window,
+                      last_activity_ts=int(now))
+        if answered:
+            fields["qa_day"] = today
+            fields["qa_count"] = qa_count + 1
+        store.update_group(chat.id, **fields)
         await msg.reply_text(out[:4000])
     else:
-        # DM: chat like a mention.
+        # DM: chat like a mention, same one-question-a-day rule per user.
+        today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+        uid = msg.from_user.id
+        rec = DM_DAILY.get(uid)
+        if rec and rec[0] == today and rec[1] >= host_logic.DAILY_QA_LIMIT:
+            if not rec[2]:
+                await msg.reply_text(DAILY_LIMIT_NOTE)
+                DM_DAILY[uid] = (today, rec[1], True)
+            return
         cfg = dict(store.DEFAULTS)
         out = await ai_reply(cfg, msg.text, msg.from_user.first_name or "") if ai_client.configured() else None
+        if out is not None:
+            n = rec[1] + 1 if (rec and rec[0] == today) else 1
+            DM_DAILY[uid] = (today, n, False)
         await msg.reply_text((out or LIMITED_NOTE)[:4000])
 
 
