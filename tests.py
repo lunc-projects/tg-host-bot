@@ -143,6 +143,28 @@ for needle in ["columbus-5", "21 days", "1.5%", "1.2%", "12223", "CW20",
     check(needle in K, f"KB contains '{needle}'")
 check("terra1" not in K, "KB contains no contract addresses")
 
+print("== upgraded KB: deep LUNC + dated governance + general crypto ==")
+for needle in ["May 2022", "Terra 2.0", "40%", "33.4%", "12233", "12234",
+               "31010600", "v14_4", "October 24, 2026", "October 26, 2026",
+               "validator.info", "NO WITH VETO", "Impermanent loss",
+               "halving", "copycat tickers",
+               "t.me/transparentvalidatorchat", "send back double", "Market cap",
+               "/terra/tax/v1beta1/params"]:
+    check(needle in K, f"upgraded KB contains '{needle}'")
+check("12234" in K and "NO sunset" in K, "12234 no-sunset caveat present")
+check("turnout" in K.lower() and "26.9%" in K, "12234 quorum snapshot present")
+for banned in ["FUN", "ROTTI", "COFFEE", "DO Chain", "do-chain"]:
+    check(banned not in K, f"KB excludes separate project '{banned}'")
+check("LUNC Kickback" not in K and "lunckickback" not in K.lower(),
+      "KB promotes no specific validator")
+check(len(kb.STARTER_THEMES) == 24, "starter pool grew to 24 themes (12 LUNC + 12 market)")
+check(sum(1 for t in kb.STARTER_THEMES if t["category"] == "lunc") == 12,
+      "12 LUNC starter themes")
+check(any("Finder" in t["fallback"] for t in kb.STARTER_THEMES),
+      "new verification starter present")
+check(any("Impermanent loss" in t["theme"] for t in kb.STARTER_THEMES),
+      "new impermanent-loss starter present")
+
 print("== topic pin ==")
 check(store.get_group(111).get("topic_id") is None, "topic_id default None")
 store.update_group(111, topic_id=1)

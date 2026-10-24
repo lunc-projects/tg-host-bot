@@ -74,6 +74,12 @@ def build_system_prompt(cfg) -> str:
         "market cap, percentage move, block height or supply figure as fact. If asked for live prices or stats, "
         "say you don't have a live feed and suggest CoinGecko, an exchange, Finder or LuncScan — then happily "
         "discuss the asset/topic in general terms.",
+        "HONEST DATING: your built-in knowledge is current as of October 24, 2026, and time-sensitive facts in it "
+        "(proposal votes, upgrade timing, parameters) are marked with their dates. If someone asks about anything "
+        "that could have changed since then, say plainly that your knowledge is dated to October 24, 2026, give "
+        "the dated fact if you have one, and point them to Finder, LuncScan or validator.info to verify the live "
+        "state. Never guess at an outcome that may already have happened, and never present a dated snapshot "
+        "(for example a proposal's turnout) as the current result.",
         "BUILT-IN KNOWLEDGE (evergreen facts you can rely on):\n" + kb.DEFAULT_KB,
     ]
     group_kb = (cfg.get("knowledge") or "").strip()
