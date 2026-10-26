@@ -12,9 +12,10 @@ import asyncio, datetime, os, random, time
 
 from telegram import Update, BotCommand
 from telegram.constants import ParseMode
+from telegram.error import BadRequest
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-import ai_client, host_logic, kb, store, budget
+import ai_client, host_logic, kb, store
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 STARTER_TICK_S = 60  # scheduler wake-up interval
@@ -27,7 +28,6 @@ I'm a bot (openly!) who helps keep this community active: I welcome new members,
 • @mention me or reply to one of my messages to chat
 • Ask crypto questions — staking, burns, governance, validators, wallet safety, market basics
 • I don't have a live price feed, so for current prices check CoinGecko or your exchange
-• Daily AI pot: when the day's 200,000-token pot runs out, AI answers pause until midnight UTC (I'll say so once, then stay quiet) — welcomes keep working
 
 *For group admins — /host commands*
 /host on | off — master switch
@@ -60,18 +60,9 @@ LIMITED_NOTE = ("🤖 I'm running in limited mode right now (my AI brain isn't c
 DAILY_LIMIT_NOTE = ("🎙 That's my one answered question for today — "
                     "I'll pick up questions again tomorrow.")
 
-POT_LIMIT_NOTE = ("⏳ Daily limit reached — be back soon! AI answers are paused "
-                  "until more tokens come at midnight UTC. The bot still works "
-                  "for simple commands and basic summaries.")
-
 # DM daily counts, in-memory only (like all Professor state, a redeploy resets
 # them): user_id -> (utc_date_str, answered_count, limit_note_sent)
 DM_DAILY = {}
-
-# DM pot-note days, in-memory only: user_id -> utc_date_str the pot note was
-# last sent. Separate from DM_DAILY so the pot note and the question-cap
-# note never interfere with each other.
-DM_POT_DAILY = {}
 
 
 def build_system_prompt(cfg) -> str:
@@ -155,7 +146,6 @@ async def on_host(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f" (after {cfg['starter_mins']} quiet mins, {len(cfg.get('custom_starters') or [])} custom)",
             f"• Questions mode: {'on' if cfg['questions_on'] else 'off'}",
             f"• Daily question limit: {host_logic.DAILY_QA_LIMIT} answered question(s) per day (UTC)",
-            f"• Daily AI pot used today (UTC): {budget.spent():,} / {budget.DAILY_TOKEN_BUDGET:,} estimated tokens",
             f"• Topic pin: {('General (1)' if cfg.get('topic_id') == 1 else cfg.get('topic_id')) if cfg.get('topic_id') else 'none — group root'}",
             f"• Quiet hours (UTC): {cfg['quiet_start']:02d}:00–{cfg['quiet_end']:02d}:00",
             f"• Learned facts: {len((cfg.get('knowledge') or '').splitlines()) if cfg.get('knowledge') else 0} line(s)",
@@ -262,6 +252,35 @@ async def on_host(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await msg.reply_text("Unknown /host option — /help lists them all.")
 
 
+def _is_stale_pin_error(err) -> bool:
+    """True when Telegram rejected a send because the pinned forum topic is
+    gone (deleted / renumbered): the group's stored topic_id is stale."""
+    if not isinstance(err, BadRequest):
+        return False
+    low = str(err).lower()
+    if "thread not found" in low:
+        return True
+    return "message_thread_id" in low and ("invalid" in low or "not found" in low)
+
+
+async def send_pinned_message(bot, chat_id, cfg, text):
+    """Send to a group honoring its topic pin (starters & welcomes).
+
+    Self-heal: if Telegram says the pinned topic no longer exists, clear the
+    pin in the store and retry ONCE at the group root, so a dead pin can
+    never mute the group forever. Any other failure propagates unchanged."""
+    kw = host_logic.thread_kw(cfg.get("topic_id"))
+    try:
+        await bot.send_message(chat_id=chat_id, text=text, **kw)
+    except BadRequest as e:
+        if not kw or not _is_stale_pin_error(e):
+            raise
+        print(f"tg-host: stale topic pin {cfg.get('topic_id')} for chat {chat_id} — "
+              f"clearing pin, retrying at group root ({e})")
+        store.update_group(chat_id, topic_id=None)
+        await bot.send_message(chat_id=chat_id, text=text)
+
+
 async def on_new_member(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     cfg = store.get_group(chat.id)
@@ -273,8 +292,7 @@ async def on_new_member(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             continue
         name = member.first_name or (f"@{member.username}" if member.username else "friend")
         text = host_logic.render_welcome(cfg.get("welcome_text") or store.DEFAULT_WELCOME, name)
-        await ctx.bot.send_message(chat_id=chat.id, text=text,
-                                   **host_logic.thread_kw(cfg.get("topic_id")))
+        await send_pinned_message(ctx.bot, chat.id, cfg, text)
 
 
 async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -312,15 +330,6 @@ async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             return
         speaker = msg.from_user.first_name or "someone"
         out = await ai_reply(cfg, msg.text, speaker) if ai_client.configured() else None
-        if out is None and ai_client.configured() and budget.exhausted():
-            # Daily pot empty: note once per group per UTC day, then silent.
-            # A pot-blocked question is not an answered question, so the
-            # daily question count is untouched, and no hourly-cap window
-            # or cooldown is consumed either.
-            if cfg.get("pot_limited_day") != today:
-                await msg.reply_text(POT_LIMIT_NOTE)
-                store.update_group(chat.id, pot_limited_day=today)
-            return
         answered = out is not None
         if out is None:
             out = LIMITED_NOTE
@@ -345,13 +354,6 @@ async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             return
         cfg = dict(store.DEFAULTS)
         out = await ai_reply(cfg, msg.text, msg.from_user.first_name or "") if ai_client.configured() else None
-        if out is None and ai_client.configured() and budget.exhausted():
-            # Daily pot empty: note once per user per UTC day, then silent.
-            # Not an answered question, so the DM daily count is untouched.
-            if DM_POT_DAILY.get(uid) != today:
-                await msg.reply_text(POT_LIMIT_NOTE)
-                DM_POT_DAILY[uid] = today
-            return
         if out is not None:
             n = rec[1] + 1 if (rec and rec[0] == today) else 1
             DM_DAILY[uid] = (today, n, False)
@@ -378,14 +380,31 @@ async def make_starter_text(cfg) -> str:
         ], temperature=0.8)
         if out:
             return out[:500]
-        if budget.exhausted():
-            # Daily pot empty: skip this AI starter quietly — return None so
-            # the loop posts nothing. Never the pot note in the group: that
-            # would spam every starter cycle. (Custom non-AI starter lines
-            # above are unaffected; theme fallbacks below are only for the
-            # unconfigured/error cases, not the pot-empty case.)
-            return None
     return theme["fallback"]
+
+
+async def starter_tick(app: Application, now, hour_utc):
+    """One scheduler pass over all groups. Each group is isolated in its own
+    try/except: a failure in one group (e.g. a stale topic pin) is logged with
+    its chat id and never aborts the tick for the remaining groups."""
+    for chat_id in store.all_group_ids():
+        try:
+            cfg = store.get_group(chat_id)
+            if not cfg["enabled"] or not cfg["starters_on"]:
+                continue
+            if not host_logic.starter_due(
+                    now, last_activity_ts=cfg["last_activity_ts"],
+                    last_starter_ts=cfg["last_starter_ts"],
+                    starter_mins=cfg["starter_mins"], hour_utc=hour_utc,
+                    quiet_start=cfg["quiet_start"], quiet_end=cfg["quiet_end"]):
+                continue
+            text = await make_starter_text(cfg)
+            await send_pinned_message(app.bot, chat_id, cfg, text)
+            store.update_group(chat_id, last_starter_ts=int(now),
+                               last_activity_ts=int(now),
+                               starter_rotation=int(cfg.get("starter_rotation") or 0) + 1)
+        except Exception as e:
+            print(f"starter_loop error for chat {chat_id}: {e}")
 
 
 async def starter_loop(app: Application):
@@ -394,26 +413,7 @@ async def starter_loop(app: Application):
             await asyncio.sleep(STARTER_TICK_S)
             now = time.time()
             hour_utc = datetime.datetime.now(datetime.timezone.utc).hour
-            for chat_id in store.all_group_ids():
-                cfg = store.get_group(chat_id)
-                if not cfg["enabled"] or not cfg["starters_on"]:
-                    continue
-                if not host_logic.starter_due(
-                        now, last_activity_ts=cfg["last_activity_ts"],
-                        last_starter_ts=cfg["last_starter_ts"],
-                        starter_mins=cfg["starter_mins"], hour_utc=hour_utc,
-                        quiet_start=cfg["quiet_start"], quiet_end=cfg["quiet_end"]):
-                    continue
-                text = await make_starter_text(cfg)
-                if text is None:
-                    # Pot-empty AI starter: skip quietly — no post, and no
-                    # state update, so the starter resumes when tokens come.
-                    continue
-                await app.bot.send_message(chat_id=chat_id, text=text,
-                                           **host_logic.thread_kw(cfg.get("topic_id")))
-                store.update_group(chat_id, last_starter_ts=int(now),
-                                   last_activity_ts=int(now),
-                                   starter_rotation=int(cfg.get("starter_rotation") or 0) + 1)
+            await starter_tick(app, now, hour_utc)
         except asyncio.CancelledError:
             raise
         except Exception as e:
