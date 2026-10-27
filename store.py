@@ -4,7 +4,7 @@ Layout: {"groups": {"<chat_id>": {config..., state...}}}
 Config keys come from DEFAULTS; state keys are runtime (last activity /
 reply / starter timestamps, reply window) and live in the same record.
 """
-import json, os, time
+import datetime, json, os, time
 
 STORE_PATH = os.getenv("STORE_PATH", "data/host_store.json")
 
@@ -36,7 +36,6 @@ DEFAULTS = {
     "qa_day": "",
     "qa_count": 0,
     "qa_limited_day": "",
-    "pot_limited_day": "",
 }
 
 
@@ -85,6 +84,27 @@ def update_group(chat_id, **fields):
 
 def all_group_ids():
     return [int(k) for k in _load()["groups"].keys()]
+
+
+def usage_counts(today=None):
+    """Owner-only usage snapshot, from what this bot actually records.
+
+    The host bot keeps no message log (unlike the assistant bots), so the
+    honest figures are: groups present in the store, and group questions
+    answered today (qa_day/qa_count are the bot's own daily counters).
+    DM question users live in bot.py's in-memory DM_DAILY and are counted
+    by the /botstats handler, not here."""
+    if today is None:
+        today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+    groups = _load().get("groups", {})
+    answered = 0
+    for rec in groups.values():
+        if isinstance(rec, dict) and rec.get("qa_day") == today:
+            try:
+                answered += int(rec.get("qa_count") or 0)
+            except (TypeError, ValueError):
+                pass
+    return {"groups": len(groups), "group_questions_today": answered}
 
 
 def touch_activity(chat_id, ts=None):

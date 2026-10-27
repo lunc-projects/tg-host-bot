@@ -18,6 +18,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 import ai_client, host_logic, kb, store
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+OWNER_ID = int(os.getenv("OWNER_TELEGRAM_ID", "0") or 0)
 STARTER_TICK_S = 60  # scheduler wake-up interval
 
 HELP = """🎙 *TG Host — your group's AI host*
@@ -127,6 +128,24 @@ async def on_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def on_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(HELP, parse_mode=ParseMode.MARKDOWN)
+
+
+async def on_botstats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    # Owner-only usage counter (not in the public command list). This bot
+    # keeps no message log and no token counter, so the card reports only
+    # what it actually records: groups served, today's answered group
+    # questions (store), and today's DM question users (in-memory).
+    if not OWNER_ID or update.effective_user.id != OWNER_ID:
+        return
+    u = store.usage_counts()
+    today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+    dm_users = sum(1 for rec in DM_DAILY.values() if rec[0] == today)
+    await update.effective_message.reply_text(
+        "*Bot usage* (only what I actually record — I don't keep a message log)\n"
+        f"Groups I'm serving: {u['groups']}\n"
+        f"Group questions answered today (UTC): {u['group_questions_today']}\n"
+        f"People who've asked me in DM today (UTC, since my last restart): {dm_users}",
+        parse_mode=ParseMode.MARKDOWN)
 
 
 async def on_host(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -458,6 +477,7 @@ def main():
     app = Application.builder().token(TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", on_start))
     app.add_handler(CommandHandler("help", on_help))
+    app.add_handler(CommandHandler("botstats", on_botstats))
     app.add_handler(CommandHandler("host", on_host))
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, on_new_member))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))

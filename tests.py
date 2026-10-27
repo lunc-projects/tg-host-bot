@@ -182,5 +182,290 @@ check(store.get_group(111).get("topic_id") is None, "topic_id cleared")
 check(host_logic.thread_kw(1) == {"message_thread_id": 1}, "thread_kw(1) pins General")
 check(host_logic.thread_kw(None) == {}, "thread_kw(None) = group root")
 check(host_logic.thread_kw(0) == {} and host_logic.thread_kw("x") == {}, "thread_kw rejects bad ids")
+check(host_logic.topic_here(1) == 1, "topic_here captures General (thread id 1)")
+check(host_logic.topic_here(4242) == 4242, "topic_here captures a named topic's thread id")
+check(host_logic.topic_here(None) is None, "topic_here(None) = no topic (root) — capture nothing")
+check(host_logic.topic_here(0) is None, "topic_here(0) = no topic")
+check(host_logic.topic_here("x") is None, "topic_here rejects garbage")
+
+print("== stale topic pin self-heal (bot level) ==")
+# These checks import bot.py, which needs the runtime deps from
+# requirements.txt (python-telegram-bot, httpx). Without them the pure-logic
+# checks above still run and this section reports itself skipped.
+try:
+    import asyncio
+    import bot
+    from telegram.error import BadRequest
+    _bot_ok = True
+except ImportError as _imp_err:
+    _bot_ok = False
+    print(f"  skipped: bot-level checks need requirements installed ({_imp_err})")
+
+if _bot_ok:
+    class FakeBot:
+        """Records successful sends; raises BadRequest('Message thread not
+        found') for (chat_id, thread_id) pairs marked stale, like Telegram
+        does when a pinned forum topic was deleted."""
+        def __init__(self, stale=(), fail_all=False):
+            self.sent = []
+            self.stale = set(stale)
+            self.fail_all = fail_all
+        async def send_message(self, chat_id=None, text=None, **kw):
+            if self.fail_all:
+                raise BadRequest("Chat not found")
+            tid = kw.get("message_thread_id")
+            if tid is not None and (chat_id, tid) in self.stale:
+                raise BadRequest("Message thread not found")
+            self.sent.append((chat_id, text, kw))
+
+    class FakeApp:
+        def __init__(self, fakebot): self.bot = fakebot
+
+    # (c) a valid pin still sends with message_thread_id set, pin kept
+    store.update_group(9001, topic_id=5)
+    fb = FakeBot()
+    asyncio.run(bot.send_pinned_message(fb, 9001, store.get_group(9001), "hello"))
+    check(fb.sent == [(9001, "hello", {"message_thread_id": 5})],
+          "valid pin sends into the pinned topic")
+    check(store.get_group(9001)["topic_id"] == 5, "valid pin is kept")
+
+    # (a) stale pin: cleared in the store + retry lands at the group root
+    store.update_group(9002, topic_id=99)
+    fb = FakeBot(stale={(9002, 99)})
+    asyncio.run(bot.send_pinned_message(fb, 9002, store.get_group(9002), "starter!"))
+    check(store.get_group(9002)["topic_id"] is None, "stale pin cleared from store")
+    check(fb.sent == [(9002, "starter!", {})], "retry lands at group root (no thread id)")
+
+    # an unrelated BadRequest must NOT clear the pin, and must propagate
+    store.update_group(9003, topic_id=7)
+    fb = FakeBot(fail_all=True)
+    try:
+        asyncio.run(bot.send_pinned_message(fb, 9003, store.get_group(9003), "x"))
+        _raised = False
+    except BadRequest:
+        _raised = True
+    check(_raised, "unrelated BadRequest still propagates")
+    check(store.get_group(9003)["topic_id"] == 7, "unrelated failure keeps the pin")
+
+    # (b) one bad group never blocks a later group in the same starter tick
+    async def _fake_starter_text(cfg):
+        return "STARTER"
+    _orig_starter_text = bot.make_starter_text
+    bot.make_starter_text = _fake_starter_text
+    try:
+        store.update_group(9101, topic_id=99, last_activity_ts=NOW - 20000,
+                           last_starter_ts=0)
+        store.update_group(9102, last_activity_ts=NOW - 20000, last_starter_ts=0)
+        fb = FakeBot(stale={(9101, 99)})
+        asyncio.run(bot.starter_tick(FakeApp(fb), NOW, 15))
+    finally:
+        bot.make_starter_text = _orig_starter_text
+    check((9101, "STARTER", {}) in fb.sent, "bad-pin group still gets its starter (root retry)")
+    check((9102, "STARTER", {}) in fb.sent, "later group in same tick still gets its starter")
+    check(store.get_group(9101)["topic_id"] is None, "tick cleared the bad group's pin")
+    check(store.get_group(9102)["last_starter_ts"] == NOW, "healthy group's starter ts recorded")
+
+    # welcome path (on_new_member) self-heals the same way
+    class _NewMember:
+        is_bot = False
+        first_name = "Newbie"
+        username = None
+    class _Chat:
+        id = 9201
+    class _MembersMsg:
+        new_chat_members = [_NewMember()]
+    class _JoinUpdate:
+        effective_chat = _Chat()
+        message = _MembersMsg()
+    class _Ctx:
+        def __init__(self, b): self.bot = b
+    store.update_group(9201, topic_id=77)
+    fb = FakeBot(stale={(9201, 77)})
+    asyncio.run(bot.on_new_member(_JoinUpdate(), _Ctx(fb)))
+    check(store.get_group(9201)["topic_id"] is None, "welcome: stale pin cleared")
+    check(len(fb.sent) == 1 and fb.sent[0][0] == 9201 and fb.sent[0][2] == {}
+          and "Newbie" in fb.sent[0][1], "welcome lands at group root after heal")
+
+    print("== pinned-send log line (bot level) ==")
+    import contextlib, io
+
+    # pinned success: one log line naming the chat + thread actually used
+    store.update_group(9001, topic_id=5)
+    fb = FakeBot()
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        asyncio.run(bot.send_pinned_message(fb, 9001, store.get_group(9001), "hello"))
+    check("tg-host: sent to chat 9001 thread 5" in buf.getvalue(),
+          "pinned send logs 'sent to chat <id> thread <tid>'")
+
+    # unpinned success: logged as thread root
+    store.update_group(9004, topic_id=None)
+    fb = FakeBot()
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        asyncio.run(bot.send_pinned_message(fb, 9004, store.get_group(9004), "root hi"))
+    check("tg-host: sent to chat 9004 thread root" in buf.getvalue(),
+          "root send logs 'thread root'")
+
+    # failure: the exception still propagates and NO sent line is logged
+    store.update_group(9003, topic_id=7)
+    fb = FakeBot(fail_all=True)
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            asyncio.run(bot.send_pinned_message(fb, 9003, store.get_group(9003), "x"))
+        _raised = False
+    except BadRequest:
+        _raised = True
+    check(_raised, "failed send still propagates (log section)")
+    check("sent to chat" not in buf.getvalue(), "failed send logs no 'sent' line")
+
+    # stale-pin heal retry: the root retry is logged as a root send
+    store.update_group(9002, topic_id=99)
+    fb = FakeBot(stale={(9002, 99)})
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        asyncio.run(bot.send_pinned_message(fb, 9002, store.get_group(9002), "starter!"))
+    check("tg-host: sent to chat 9002 thread root" in buf.getvalue(),
+          "healed root retry logs 'thread root'")
+
+    print("== /host topic here (bot level) ==")
+
+    class _HostMsg:
+        def __init__(self, thread_id=None):
+            self.message_thread_id = thread_id
+            self.replies = []
+        async def reply_text(self, text, **kw):
+            self.replies.append(text)
+
+    class _HostChat:
+        def __init__(self, cid):
+            self.id = cid
+            self.type = "supergroup"
+            self.title = "FRG"
+
+    class _HostUser:
+        def __init__(self, uid): self.id = uid
+
+    class _HostUpdate:
+        def __init__(self, cid, uid, thread_id=None):
+            self.effective_chat = _HostChat(cid)
+            self.effective_user = _HostUser(uid)
+            self.message = _HostMsg(thread_id)
+
+    class _HostMember:
+        def __init__(self, status): self.status = status
+
+    class _HostBot:
+        def __init__(self, member): self._member = member
+        async def get_chat_member(self, chat_id, user_id): return self._member
+
+    class _HostCtx:
+        def __init__(self, args, member):
+            self.args = args
+            self.bot = _HostBot(member)
+
+    ADMIN = _HostMember("administrator")
+
+    # 'here' captures the thread id of the topic the admin is standing in
+    upd = _HostUpdate(9301, 501, thread_id=4242)
+    asyncio.run(bot.on_host(upd, _HostCtx(["topic", "here"], ADMIN)))
+    check(store.get_group(9301)["topic_id"] == 4242,
+          "'here' stores the command message's own thread id")
+    check(any("4242" in r for r in upd.message.replies),
+          "'here' reply echoes the captured topic id")
+
+    # 'here' in General captures 1 and says so
+    upd = _HostUpdate(9302, 501, thread_id=1)
+    asyncio.run(bot.on_host(upd, _HostCtx(["topic", "here"], ADMIN)))
+    check(store.get_group(9302)["topic_id"] == 1, "'here' in General stores 1")
+    check(any("General" in r for r in upd.message.replies),
+          "'here' reply notes id 1 is General")
+
+    # 'here' at the group root: nothing changes, admin is told to stand in a topic
+    store.update_group(9303, topic_id=7)
+    upd = _HostUpdate(9303, 501, thread_id=None)
+    asyncio.run(bot.on_host(upd, _HostCtx(["topic", "here"], ADMIN)))
+    check(store.get_group(9303)["topic_id"] == 7,
+          "'here' with no thread id changes nothing (old pin kept)")
+    check(any("inside a topic" in r for r in upd.message.replies),
+          "'here' at root explains: run it from inside the topic")
+
+    # numeric + off paths unchanged
+    upd = _HostUpdate(9304, 501)
+    asyncio.run(bot.on_host(upd, _HostCtx(["topic", "5"], ADMIN)))
+    check(store.get_group(9304)["topic_id"] == 5, "numeric /host topic <id> still works")
+    upd = _HostUpdate(9304, 501)
+    asyncio.run(bot.on_host(upd, _HostCtx(["topic", "off"], ADMIN)))
+    check(store.get_group(9304)["topic_id"] is None, "/host topic off still clears the pin")
+
+    # non-admins can't pin with 'here' either (existing admin gate covers it)
+    upd = _HostUpdate(9305, 502, thread_id=9)
+    asyncio.run(bot.on_host(upd, _HostCtx(["topic", "here"], _HostMember("member"))))
+    check(store.get_group(9305)["topic_id"] is None, "non-admin 'here' is refused, nothing stored")
+    check(any("Only group admins" in r for r in upd.message.replies),
+          "non-admin 'here' gets the admin-gate reply")
+
+    print("== /botstats (bot level) ==")
+    import datetime as _dtmod
+
+    # store figures on a deterministic future day, so reruns never flake
+    _c = store.usage_counts(today="2030-01-01")
+    check(_c["group_questions_today"] == 0, "usage_counts: nothing answered on a future day")
+    store.update_group(9601, qa_day="2030-01-01", qa_count=1)
+    store.update_group(9602, qa_day="2030-01-02", qa_count=7)
+    _c = store.usage_counts(today="2030-01-01")
+    check(_c["group_questions_today"] == 1, "usage_counts counts only today's group questions")
+    check(_c["groups"] == len(store.all_group_ids()), "usage_counts groups = groups in store")
+
+    class _StatsMsg:
+        def __init__(self):
+            self.replies = []
+        async def reply_text(self, text, **kw):
+            self.replies.append(text)
+
+    class _StatsUser:
+        def __init__(self, uid): self.id = uid
+
+    class _StatsUpdate:
+        def __init__(self, uid):
+            self.effective_user = _StatsUser(uid)
+            self.effective_message = _StatsMsg()
+            self.message = self.effective_message
+
+    class _StatsCtx:
+        args = []
+
+    _today = _dtmod.datetime.now(_dtmod.timezone.utc).strftime("%Y-%m-%d")
+    _saved_owner = bot.OWNER_ID
+    _saved_dm = dict(bot.DM_DAILY)
+    try:
+        bot.OWNER_ID = 606060
+        bot.DM_DAILY.clear()
+        bot.DM_DAILY[111001] = (_today, 1, False)        # asked today
+        bot.DM_DAILY[111002] = ("1999-01-01", 1, False)  # stale day, must not count
+        upd = _StatsUpdate(606060)
+        asyncio.run(bot.on_botstats(upd, _StatsCtx()))
+        check(len(upd.effective_message.replies) == 1, "owner gets the /botstats card")
+        _txt = upd.effective_message.replies[0]
+        check(f"Groups I'm serving: {len(store.all_group_ids())}" in _txt,
+              "card shows the live group count")
+        check("Group questions answered today (UTC):" in _txt,
+              "card shows today's group question count")
+        check("People who've asked me in DM today (UTC, since my last restart): 1" in _txt,
+              "card counts only today's DM question users")
+
+        upd = _StatsUpdate(606061)
+        asyncio.run(bot.on_botstats(upd, _StatsCtx()))
+        check(upd.effective_message.replies == [], "non-owner gets silence")
+
+        bot.OWNER_ID = 0
+        upd = _StatsUpdate(606060)
+        asyncio.run(bot.on_botstats(upd, _StatsCtx()))
+        check(upd.effective_message.replies == [], "no owner configured = silence for everyone")
+    finally:
+        bot.OWNER_ID = _saved_owner
+        bot.DM_DAILY.clear()
+        bot.DM_DAILY.update(_saved_dm)
 
 print(f"\nALL {passed} CHECKS PASSED")
