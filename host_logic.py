@@ -119,5 +119,18 @@ def thread_kw(topic_id):
     return {"message_thread_id": tid} if tid >= 1 else {}
 
 
+def topic_here(message_thread_id):
+    """Topic id captured from a message sent inside a forum topic (the
+    `/host topic here` path): the message's own message_thread_id, which
+    Telegram sets on posts inside a topic (1 = General). Returns None when
+    the message carries no thread id — sent at the group root / outside any
+    topic — so the caller can ask the admin to re-run it inside a topic."""
+    try:
+        tid = int(message_thread_id)
+    except (TypeError, ValueError):
+        return None
+    return tid if tid >= 1 else None
+
+
 def render_welcome(template: str, name: str) -> str:
     return template.replace("{name}", name or "friend")

@@ -43,7 +43,7 @@ I'm a bot (openly!) who helps keep this community active: I welcome new members,
 /host addstarter <text> — add a custom starter line
 /host questions on | off — also answer unaddressed crypto questions ending in ?
 /host quiet <start>-<end> — my quiet hours in UTC (e.g. 4-11)
-/host topic <id | off> — pin my starters & welcomes to a forum topic (1 = General)"""
+/host topic here | <id> | off — pin my starters & welcomes to a forum topic (send "here" from inside the topic you want; 1 = General)"""
 
 DM_START = """🎙 Hi, I'm a *TG Host* bot — an AI host for crypto groups, with a LUNC / Terra Classic heart.
 
@@ -146,7 +146,7 @@ async def on_host(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f" (after {cfg['starter_mins']} quiet mins, {len(cfg.get('custom_starters') or [])} custom)",
             f"• Questions mode: {'on' if cfg['questions_on'] else 'off'}",
             f"• Daily question limit: {host_logic.DAILY_QA_LIMIT} answered question(s) per day (UTC)",
-            f"• Topic pin: {('General (1)' if cfg.get('topic_id') == 1 else cfg.get('topic_id')) if cfg.get('topic_id') else 'none — group root'}",
+            f"• Topic pin: {('General (1)' if cfg.get('topic_id') == 1 else cfg.get('topic_id')) if cfg.get('topic_id') else 'none — group root (pin with /host topic here)'}",
             f"• Quiet hours (UTC): {cfg['quiet_start']:02d}:00–{cfg['quiet_end']:02d}:00",
             f"• Learned facts: {len((cfg.get('knowledge') or '').splitlines()) if cfg.get('knowledge') else 0} line(s)",
             f"• AI brain: {'connected' if ai_client.configured() else 'NOT configured (limited mode)'}",
@@ -223,7 +223,19 @@ async def on_host(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         store.update_group(chat.id, questions_on=(rest.lower() == "on"))
         await msg.reply_text(f"❓ Questions mode {'on — I’ll also answer unaddressed crypto questions ending in ?' if rest.lower() == 'on' else 'off'}.")
     elif sub == "topic":
-        if rest.lower() in ("off", "none", "clear"):
+        if rest.lower() == "here":
+            # Pin to the topic the admin is standing in: Telegram stamps the
+            # command message itself with that topic's message_thread_id.
+            tid = host_logic.topic_here(getattr(msg, "message_thread_id", None))
+            if tid is None:
+                await msg.reply_text("📌 That only works from inside a topic — open the topic you "
+                                     "want me to post in and send /host topic here from there. "
+                                     "Nothing changed.")
+                return
+            store.update_group(chat.id, topic_id=tid)
+            await msg.reply_text(f"📌 Pinned — my starters & welcomes will post to this topic (id {tid})"
+                                 + (" — that's General." if tid == 1 else "."))
+        elif rest.lower() in ("off", "none", "clear"):
             store.update_group(chat.id, topic_id=None)
             await msg.reply_text("📌 Topic pin cleared — my starters & welcomes go to the group root.")
         else:
@@ -232,7 +244,8 @@ async def on_host(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 if tid < 1:
                     raise ValueError
             except ValueError:
-                await msg.reply_text("Usage: /host topic <topic id | off> — General is topic 1.")
+                await msg.reply_text("Usage: /host topic <topic id | here | off> — General is topic 1, "
+                                     "and 'here' pins the topic you're standing in.")
                 return
             store.update_group(chat.id, topic_id=tid)
             await msg.reply_text(f"📌 Pinned — my starters & welcomes will post to topic {tid}"
@@ -279,6 +292,10 @@ async def send_pinned_message(bot, chat_id, cfg, text):
               f"clearing pin, retrying at group root ({e})")
         store.update_group(chat_id, topic_id=None)
         await bot.send_message(chat_id=chat_id, text=text)
+        print(f"tg-host: sent to chat {chat_id} thread root")
+        return
+    tid = kw.get("message_thread_id")
+    print(f"tg-host: sent to chat {chat_id} thread {tid if tid else 'root'}")
 
 
 async def on_new_member(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
