@@ -58,8 +58,10 @@ In a group I welcome newcomers, chat when mentioned or replied to, and start a c
 LIMITED_NOTE = ("🤖 I'm running in limited mode right now (my AI brain isn't configured), "
                 "so I can welcome people but can't really chat yet. An admin/owner needs to set AI_API_KEY.")
 
-DAILY_LIMIT_NOTE = ("🎙 That's my one answered question for today — "
-                    "I'll pick up questions again tomorrow.")
+DAILY_LIMIT_NOTE = ("🎙 I've reached my daily limit for answered questions — "
+                    "I'll be back answering tomorrow. Keep the chat going though! 🙂")
+
+ERROR_NOTE = ("🎙 My brain hiccuped on that one — give me a moment and try again. 🙏")
 
 # DM daily counts, in-memory only (like all Professor state, a redeploy resets
 # them): user_id -> (utc_date_str, answered_count, limit_note_sent)
@@ -103,6 +105,23 @@ async def ai_reply(cfg, user_text, speaker=""):
         {"role": "user", "content": (f"{speaker}: {user_text}" if speaker else user_text)},
     ])
     return out
+
+
+async def ai_reply_or_note(cfg, user_text, speaker=""):
+    """(text, answered): the AI reply, or the HONEST note for why not.
+
+    The 'isn't configured' note is reserved for a genuinely missing AI
+    key. A spent daily pot reads as the daily limit, and an API error as
+    a momentary hiccup — the real reason is logged server-side by
+    ai_client either way."""
+    out = await ai_reply(cfg, user_text, speaker)
+    if out is not None:
+        return out, True
+    kind = host_logic.ai_failure_note(ai_client.configured(), ai_client.last_failure())
+    note = {"unconfigured": LIMITED_NOTE,
+            "daily_limit": DAILY_LIMIT_NOTE,
+            "error": ERROR_NOTE}[kind]
+    return note, False
 
 
 async def is_group_admin(ctx, chat_id, user_id) -> bool:
@@ -390,10 +409,7 @@ async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 store.update_group(chat.id, qa_limited_day=today)
             return
         speaker = msg.from_user.first_name or "someone"
-        out = await ai_reply(cfg, msg.text, speaker) if ai_client.configured() else None
-        answered = out is not None
-        if out is None:
-            out = LIMITED_NOTE
+        out, answered = await ai_reply_or_note(cfg, msg.text, speaker)
         window = host_logic.prune_reply_window(cfg["reply_window"], now)
         window.append(int(now))
         fields = dict(last_reply_ts=int(now), reply_window=window,
@@ -404,21 +420,21 @@ async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         store.update_group(chat.id, **fields)
         await msg.reply_text(out[:4000])
     else:
-        # DM: chat like a mention, same one-question-a-day rule per user.
+        # DM: chat like a mention, with its own per-user daily cap.
         today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
         uid = msg.from_user.id
         rec = DM_DAILY.get(uid)
-        if rec and rec[0] == today and rec[1] >= host_logic.DAILY_QA_LIMIT:
+        if rec and rec[0] == today and rec[1] >= host_logic.DM_DAILY_QA_LIMIT:
             if not rec[2]:
                 await msg.reply_text(DAILY_LIMIT_NOTE)
                 DM_DAILY[uid] = (today, rec[1], True)
             return
         cfg = dict(store.DEFAULTS)
-        out = await ai_reply(cfg, msg.text, msg.from_user.first_name or "") if ai_client.configured() else None
-        if out is not None:
+        out, answered = await ai_reply_or_note(cfg, msg.text, msg.from_user.first_name or "")
+        if answered:
             n = rec[1] + 1 if (rec and rec[0] == today) else 1
             DM_DAILY[uid] = (today, n, False)
-        await msg.reply_text((out or LIMITED_NOTE)[:4000])
+        await msg.reply_text(out[:4000])
 
 
 # ---------------------------------------------------------------- starters

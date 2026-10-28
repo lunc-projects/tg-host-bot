@@ -67,10 +67,12 @@ check(host_logic.cap_ok([NOW - 7200] * 30, NOW, 30), "old replies fall out of wi
 check(host_logic.prune_reply_window([NOW - 7200, NOW - 10], NOW) == [NOW - 10], "prune keeps only recent")
 
 print("== daily question cap ==")
-check(host_logic.DAILY_QA_LIMIT == 1, "daily question limit is 1")
+check(host_logic.DAILY_QA_LIMIT == 5, "daily question limit is 5 per group")
+check(host_logic.DM_DAILY_QA_LIMIT == 3, "DM question limit is 3 per user")
 check(host_logic.daily_qa_ok("", 0, "2026-10-24"), "daily cap ok with no prior day")
 check(host_logic.daily_qa_ok("2026-10-23", 1, "2026-10-24"), "new UTC day resets daily count")
-check(not host_logic.daily_qa_ok("2026-10-24", 1, "2026-10-24"), "daily cap blocks second question same day")
+check(host_logic.daily_qa_ok("2026-10-24", 1, "2026-10-24"), "daily cap allows second question same day (cap 5)")
+check(not host_logic.daily_qa_ok("2026-10-24", 5, "2026-10-24"), "daily cap blocks sixth question same day")
 check(host_logic.daily_qa_count("2026-10-23", 1, "2026-10-24") == 0, "daily count resets on new day")
 check(host_logic.daily_qa_count("2026-10-24", 1, "2026-10-24") == 1, "daily count keeps same-day total")
 

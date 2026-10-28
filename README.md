@@ -30,7 +30,7 @@ is per-group.
   CoinGecko / an exchange / Finder instead. No financial advice, no price
   predictions, no shilling, never asks for seed phrases
 - **Anti-flood**: per-group reply cooldown (20 s) and hourly reply cap (30);
-  answered member questions capped at 1 per group per UTC day (DMs: 1 per user per day)
+  answered member questions capped at 5 per group per UTC day (DMs: 3 per user per day)
 
 ## Set up the bot (BotFather)
 
@@ -53,7 +53,7 @@ is per-group.
    | Variable | Value |
    |---|---|
    | `TELEGRAM_BOT_TOKEN` | the BotFather token |
-   | `AI_API_KEY` | your Groq (or OpenAI-compatible) API key |
+   | `AI_API_KEY` | your Groq (or OpenAI-compatible) API key — `GROQ_API_KEY` or `OPENAI_API_KEY` are also accepted |
    | `AI_BASE_URL` | `https://api.groq.com/openai/v1` (default) |
    | `AI_MODEL` | `openai/gpt-oss-120b` (default) |
 3. Start command is the Procfile: `worker: python bot.py`. Railway picks it up
@@ -88,7 +88,7 @@ Members: @mention the bot or reply to it. Admins shape it with `/host`:
 | `/host startermins <30–1440>` | quiet minutes before a starter |
 | `/host addstarter <text>` | add a custom starter line |
 | `/host questions on/off` | answer unaddressed crypto "?" messages too |
-| `/host topic <id \| off>` | pin starters & welcomes to a forum topic (1 = General) |
+| `/host topic <here \| id \| off>` | pin starters & welcomes to a forum topic (run `here` inside the topic you want; 1 = General) |
 | `/host quiet <start>-<end>` | quiet hours in UTC (default 4–11) |
 
 All config commands are group-admin only; the bot politely refuses everyone

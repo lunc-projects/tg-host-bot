@@ -68,7 +68,24 @@ def prune_reply_window(reply_timestamps, now, window_s=3600):
     return [t for t in reply_timestamps if now - t < window_s]
 
 
-DAILY_QA_LIMIT = 1  # answered member questions per group per UTC day
+DAILY_QA_LIMIT = 5  # answered member questions per group per UTC day
+DM_DAILY_QA_LIMIT = 3  # answered questions per user per UTC day in DMs
+
+
+def ai_failure_note(configured, failure):
+    """Which user-facing note honestly fits a failed AI reply.
+
+    'unconfigured' ONLY when the AI key is genuinely absent — a pot-empty
+    day or an API hiccup must never be presented as "isn't configured":
+      configured + failure 'pot'   -> 'daily_limit'
+      configured + failure 'error' -> 'error'
+      not configured               -> 'unconfigured'
+    """
+    if not configured or failure == "unconfigured":
+        return "unconfigured"
+    if failure == "pot":
+        return "daily_limit"
+    return "error"
 
 
 def daily_qa_count(qa_day, qa_count, today) -> int:
