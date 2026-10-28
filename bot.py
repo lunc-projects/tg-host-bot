@@ -15,7 +15,7 @@ from telegram.constants import ParseMode
 from telegram.error import BadRequest
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-import ai_client, host_logic, kb, store
+import ai_client, host_logic, kb, store, stats_report
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 OWNER_ID = int(os.getenv("OWNER_TELEGRAM_ID", "0") or 0)
@@ -146,6 +146,31 @@ async def on_botstats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"Group questions answered today (UTC): {u['group_questions_today']}\n"
         f"People who've asked me in DM today (UTC, since my last restart): {dm_users}",
         parse_mode=ParseMode.MARKDOWN)
+
+
+def professor_counts():
+    """The counts this bot publishes for the combined daily report —
+    exactly what /botstats shows: groups serving, group questions
+    answered today (store), DM askers today (in-memory DM_DAILY)."""
+    u = store.usage_counts()
+    today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+    dm_users = sum(1 for rec in DM_DAILY.values() if rec[0] == today)
+    return {"groups_serving": u["groups"],
+            "group_questions_today": u["group_questions_today"],
+            "dm_askers_today": dm_users}
+
+
+async def stats_loop(app: Application):
+    """Publish counts to the shared stats DB every ~30 min (silent
+    no-op until UPSTASH_STATS_* is configured)."""
+    while True:
+        try:
+            await stats_report.publish(professor_counts())
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass
+        await asyncio.sleep(1800)
 
 
 async def on_host(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -469,6 +494,7 @@ async def post_init(app: Application):
     except Exception as e:
         print(f"post_init: {e}")
     asyncio.create_task(starter_loop(app))
+    asyncio.create_task(stats_loop(app))
 
 
 def main():
