@@ -127,6 +127,26 @@ def pick_theme(rng=None):
     return rng.choices(themes, weights=[t["weight"] for t in themes], k=1)[0]
 
 
+STARTERS_ENV_VALUES = ("1", "true", "yes", "on")
+
+
+def starters_globally_enabled(env_value) -> bool:
+    """Owner-level master switch for ALL proactive posts, read from the
+    STARTERS_ENABLED env var. DEFAULT IS OFF: anything but an explicit
+    truthy value ('1', 'true', 'yes', 'on') means the bot never posts on
+    its own initiative — it speaks only when asked (mention / reply / DM /
+    command). Owner directive 2026-10-29: 'Turn off the professor unless
+    he is asked a question.'"""
+    return str(env_value or "").strip().lower() in STARTERS_ENV_VALUES
+
+
+def starters_allowed(env_value, group_on) -> bool:
+    """A starter may post only when BOTH the owner switch is on AND the
+    group's own /host starters setting is on. The owner switch wins: a
+    group can never re-enable starters the owner has turned off."""
+    return starters_globally_enabled(env_value) and bool(group_on)
+
+
 def thread_kw(topic_id):
     """send_message kwargs pinning a post to a forum topic (1 = General)."""
     try:

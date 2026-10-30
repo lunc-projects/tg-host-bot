@@ -18,7 +18,10 @@ DEFAULTS = {
     "knowledge": "",
     "welcome_on": True,
     "welcome_text": DEFAULT_WELCOME,
-    "starters_on": True,
+    # Default OFF since 2026-10-29 (owner: the Professor speaks only when
+    # asked). Even a stored True cannot fire while the STARTERS_ENABLED
+    # owner switch is off — see host_logic.starters_allowed.
+    "starters_on": False,
     "starter_mins": 240,
     "custom_starters": [],
     "questions_on": False,

@@ -254,10 +254,15 @@ if _bot_ok:
         return "STARTER"
     _orig_starter_text = bot.make_starter_text
     bot.make_starter_text = _fake_starter_text
+    # Since 2026-10-29 starters are gated by the owner's STARTERS_ENABLED
+    # switch (default off) and default off per group — this section tests
+    # the tick mechanics, so it explicitly turns both on.
+    os.environ["STARTERS_ENABLED"] = "1"
     try:
         store.update_group(9101, topic_id=99, last_activity_ts=NOW - 20000,
-                           last_starter_ts=0)
-        store.update_group(9102, last_activity_ts=NOW - 20000, last_starter_ts=0)
+                           last_starter_ts=0, starters_on=True)
+        store.update_group(9102, last_activity_ts=NOW - 20000, last_starter_ts=0,
+                           starters_on=True)
         fb = FakeBot(stale={(9101, 99)})
         asyncio.run(bot.starter_tick(FakeApp(fb), NOW, 15))
     finally:

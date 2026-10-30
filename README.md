@@ -16,7 +16,9 @@ is per-group.
 - **Chats** when @mentioned or replied to — short, conversational, community-native
 - **Questions mode** (optional, off by default): also answers unaddressed
   crypto questions that end in "?"
-- **Conversation starters**: when a group is silent longer than a set time
+- **Conversation starters** *(OFF by default since 2026-10-29 — the owner
+  switched the Professor to speak-only-when-asked)*: when a group is silent
+  longer than a set time
   (default 4 h, outside quiet hours), it posts one starter. Themes are
   ~60% LUNC (governance, staking, the burn, validators, ecosystem, community)
   and ~40% big-market (BTC dominance, sectors, risk-on/off, cycles) —
@@ -56,6 +58,7 @@ is per-group.
    | `AI_API_KEY` | your Groq (or OpenAI-compatible) API key — `GROQ_API_KEY` or `OPENAI_API_KEY` are also accepted |
    | `AI_BASE_URL` | `https://api.groq.com/openai/v1` (default) |
    | `AI_MODEL` | `openai/gpt-oss-120b` (default) |
+   | `STARTERS_ENABLED` | leave unset (default) = proactive starters OFF — the bot speaks only when asked. Set to `1` only to re-enable conversation starters (a group's `/host starters on` is also required) |
 3. Start command is the Procfile: `worker: python bot.py`. Railway picks it up
    automatically.
 4. Add the bot to a group, make it admin, and run `/host status` to confirm

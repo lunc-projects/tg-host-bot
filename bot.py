@@ -39,7 +39,7 @@ I'm a bot (openly!) who helps keep this community active: I welcome new members,
 /host forget — clear learned facts
 /host welcome <text> — set welcome message ({name} = new member)
 /host welcometoggle — welcome messages on/off
-/host starters on | off — conversation starters
+/host starters on | off — conversation starters (owner switch is OFF: I currently only speak when asked)
 /host startermins <30–1440> — how quiet before I start a topic
 /host addstarter <text> — add a custom starter line
 /host questions on | off — also answer unaddressed crypto questions ending in ?
@@ -205,8 +205,9 @@ async def on_host(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"🎙 *Host status — {chat.title or 'this group'}*",
             f"• Host: {'ON' if cfg['enabled'] else 'OFF'} · name: {cfg.get('persona_name')}",
             f"• Welcome: {'on' if cfg['welcome_on'] else 'off'}",
-            f"• Starters: {'on' if cfg['starters_on'] else 'off'}"
-            f" (after {cfg['starter_mins']} quiet mins, {len(cfg.get('custom_starters') or [])} custom)",
+            f"• Starters: {'on' if host_logic.starters_allowed(os.getenv('STARTERS_ENABLED'), cfg['starters_on']) else 'off'}"
+            f" (after {cfg['starter_mins']} quiet mins, {len(cfg.get('custom_starters') or [])} custom)"
+            f"{'' if starters_globally_on() else ' — disabled by the owner: I only speak when asked'}",
             f"• Questions mode: {'on' if cfg['questions_on'] else 'off'}",
             f"• Daily question limit: {host_logic.DAILY_QA_LIMIT} answered question(s) per day (UTC)",
             f"• Topic pin: {('General (1)' if cfg.get('topic_id') == 1 else cfg.get('topic_id')) if cfg.get('topic_id') else 'none — group root (pin with /host topic here)'}",
@@ -262,7 +263,12 @@ async def on_host(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await msg.reply_text("Usage: /host starters on | off")
             return
         store.update_group(chat.id, starters_on=(rest.lower() == "on"))
-        await msg.reply_text(f"💬 Conversation starters {'enabled' if rest.lower() == 'on' else 'disabled'}.")
+        note = ""
+        if rest.lower() == "on" and not starters_globally_on():
+            note = (" Note: starters are switched off by the owner right now, so I still "
+                    "won't post on my own — this setting takes effect if the owner "
+                    "switches them back on.")
+        await msg.reply_text(f"💬 Conversation starters {'enabled' if rest.lower() == 'on' else 'disabled'}.{note}")
     elif sub == "startermins":
         try:
             n = int(rest)
@@ -460,14 +466,28 @@ async def make_starter_text(cfg) -> str:
     return theme["fallback"]
 
 
+def starters_globally_on() -> bool:
+    """Owner master switch for proactive posts (STARTERS_ENABLED env var,
+    default OFF — see host_logic.starters_globally_enabled). Read fresh on
+    every call so the state is always the deployed one."""
+    return host_logic.starters_globally_enabled(os.getenv("STARTERS_ENABLED"))
+
+
 async def starter_tick(app: Application, now, hour_utc):
     """One scheduler pass over all groups. Each group is isolated in its own
     try/except: a failure in one group (e.g. a stale topic pin) is logged with
-    its chat id and never aborts the tick for the remaining groups."""
+    its chat id and never aborts the tick for the remaining groups.
+
+    Owner switch first: with STARTERS_ENABLED unset/off this is a no-op —
+    the Professor posts nothing on his own initiative, in any group,
+    whatever the per-group setting says."""
+    if not starters_globally_on():
+        return
     for chat_id in store.all_group_ids():
         try:
             cfg = store.get_group(chat_id)
-            if not cfg["enabled"] or not cfg["starters_on"]:
+            if not cfg["enabled"] or not host_logic.starters_allowed(
+                    os.getenv("STARTERS_ENABLED"), cfg["starters_on"]):
                 continue
             if not host_logic.starter_due(
                     now, last_activity_ts=cfg["last_activity_ts"],
@@ -509,7 +529,12 @@ async def post_init(app: Application):
         ])
     except Exception as e:
         print(f"post_init: {e}")
-    asyncio.create_task(starter_loop(app))
+    if starters_globally_on():
+        asyncio.create_task(starter_loop(app))
+        print("tg-host: starters ON (STARTERS_ENABLED set) — proactive posts active")
+    else:
+        print("tg-host: starters OFF (STARTERS_ENABLED unset/off) — "
+              "the Professor speaks only when asked")
     asyncio.create_task(stats_loop(app))
 
 
